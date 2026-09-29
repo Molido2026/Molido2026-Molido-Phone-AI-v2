@@ -4,12 +4,19 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
   pull_request:
     branches:
       - main
 
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (example: v2.0.0)'
+        required: true
+        default: 'v2.0.0'
 
 permissions:
   contents: read
@@ -65,3 +72,44 @@ jobs:
           name: molido-phone-ai-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  release:
+    name: Signed Release APK
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+          cache-provider: basic
+
+      - name: Decode keystore
+        run: echo "$KEYSTORE_B64" | base64 -d > molido.jks
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+
+      - name: Build signed release APK
+        run: gradle :app:assembleRelease --stacktrace
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/molido.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: app/build/outputs/apk/release/*.apk
